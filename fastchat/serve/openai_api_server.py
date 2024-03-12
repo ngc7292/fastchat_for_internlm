@@ -10,6 +10,7 @@ python3 -m fastchat.serve.openai_api_server
 import asyncio
 import argparse
 import json
+import logging
 import os
 from typing import Generator, Optional, Union, Dict, List, Any
 
@@ -67,6 +68,8 @@ from fastchat.protocol.api_protocol import (
 from fastchat.utils import build_logger
 
 logger = build_logger("openai_api_server", "openai_api_server.log")
+
+# logger.setLevel(logging.DEBUG)
 
 conv_template_map = {}
 
@@ -289,13 +292,14 @@ async def get_gen_params(
         system_template=conv["system_template"],
         system_message=conv["system_message"],
         roles=conv["roles"],
-        messages=list(conv["messages"]),  # prevent in-place modification
+        messages=list(conv["messages"]) if conv['messages'] is not None else [],  # prevent in-place modification
         offset=conv["offset"],
         sep_style=SeparatorStyle(conv["sep_style"]),
         sep=conv["sep"],
         sep2=conv["sep2"],
         stop_str=conv["stop_str"],
         stop_token_ids=conv["stop_token_ids"],
+        image_placeholder_str=conv["image_placeholder_str"]
     )
 
     if isinstance(messages, str):
@@ -307,19 +311,19 @@ async def get_gen_params(
             if msg_role == "system":
                 conv.set_system_message(message["content"])
             elif msg_role == "user":
-                if type(message["content"]) == list:
-                    image_list = [
-                        item["image_url"]["url"]
-                        for item in message["content"]
-                        if item["type"] == "image_url"
-                    ]
-                    text_list = [
-                        item["text"]
-                        for item in message["content"]
-                        if item["type"] == "text"
-                    ]
+                if isinstance(message["content"], list):
+                    
+                    text_list = []
+                    image_list = []
+                    
+                    for item in message["content"]:
+                        if item["type"] == "text":
+                            text_list.append(item['text'])
+                        elif item['type'] == "image_url":
+                            text_list.append("<image>")
+                            image_list.append(item["image_url"]["url"])
 
-                    text = "\n".join(text_list)
+                    text = "".join(text_list)
                     conv.append_message(conv.roles[0], (text, image_list))
                 else:
                     conv.append_message(conv.roles[0], message["content"])
@@ -361,7 +365,7 @@ async def get_gen_params(
 
     gen_params["stop"] = list(new_stop)
 
-    logger.debug(f"==== request ====\n{gen_params}")
+    logger.debug(f"==== request ====\n{gen_params['prompt']}")
     return gen_params
 
 
@@ -828,17 +832,17 @@ async def create_chat_completion(request: APIChatCompletionRequest):
     if request.repetition_penalty is not None:
         gen_params["repetition_penalty"] = request.repetition_penalty
 
-    max_new_tokens, error_check_ret = await check_length(
-        request,
-        gen_params["prompt"],
-        gen_params["max_new_tokens"],
-        worker_addr,
-    )
+    # max_new_tokens, error_check_ret = await check_length(
+    #     request,
+    #     gen_params["prompt"],
+    #     gen_params["max_new_tokens"],
+    #     worker_addr,
+    # )
 
     if error_check_ret is not None:
         return error_check_ret
 
-    gen_params["max_new_tokens"] = max_new_tokens
+    # gen_params["max_new_tokens"] = max_new_tokens
 
     if request.stream:
         generator = chat_completion_stream_generator(

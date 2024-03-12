@@ -1,10 +1,13 @@
 """Model adapter registration."""
 
 import math
+from operator import is_
 import os
 import re
 import sys
+import json
 from typing import Dict, List, Optional
+from venv import logger
 import warnings
 
 if sys.version_info >= (3, 9):
@@ -35,6 +38,8 @@ from fastchat.model.model_falcon import generate_stream_falcon
 from fastchat.model.model_yuan2 import generate_stream_yuan2
 from fastchat.model.model_exllama import generate_stream_exllama
 from fastchat.model.model_xfastertransformer import generate_stream_xft
+
+from fastchat.model.model_train_internlm import generate_stream_traininternlm
 from fastchat.model.monkey_patch_non_inplace import (
     replace_llama_attn_with_non_inplace_operations,
 )
@@ -192,6 +197,7 @@ def load_model(
     xft_config: Optional[XftConfig] = None,
     revision: str = "main",
     debug: bool = False,
+    **kwargs
 ):
     """Load a model from Hugging Face."""
     import accelerate
@@ -204,18 +210,18 @@ def load_model(
         device, load_8bit, cpu_offloading
     )
     if device == "cpu":
-        kwargs = {"torch_dtype": torch.float32}
+        kwargs.update({"torch_dtype": torch.float32})
         if CPU_ISA in ["avx512_bf16", "amx"]:
             try:
                 import intel_extension_for_pytorch as ipex
 
-                kwargs = {"torch_dtype": torch.bfloat16}
+                kwargs.update({"torch_dtype": torch.bfloat16})
             except ImportError:
                 warnings.warn(
                     "Intel Extension for PyTorch is not installed, it can be installed to accelerate cpu inference"
                 )
     elif device == "cuda":
-        kwargs = {"torch_dtype": torch.float16}
+        kwargs.update({"torch_dtype": torch.float16})
         if num_gpus != 1:
             kwargs["device_map"] = "auto"
             if max_gpu_memory is None:
@@ -230,7 +236,7 @@ def load_model(
             else:
                 kwargs["max_memory"] = {i: max_gpu_memory for i in range(num_gpus)}
     elif device == "mps":
-        kwargs = {"torch_dtype": torch.float16}
+        kwargs.update({"torch_dtype": torch.float16})
         import transformers
 
         version = tuple(int(v) for v in transformers.__version__.split("."))
@@ -242,7 +248,7 @@ def load_model(
             # Avoid bugs in mps backend by not using in-place operations.
             replace_llama_attn_with_non_inplace_operations()
     elif device == "xpu":
-        kwargs = {"torch_dtype": torch.bfloat16}
+        kwargs.update({"torch_dtype": torch.bfloat16})
         # Try to load ipex, while it looks unused, it links into torch for xpu support
         try:
             import intel_extension_for_pytorch as ipex
@@ -251,7 +257,7 @@ def load_model(
                 "Intel Extension for PyTorch is not installed, but is required for xpu inference."
             )
     elif device == "npu":
-        kwargs = {"torch_dtype": torch.float16}
+        kwargs.update({"torch_dtype": torch.float16})
         # Try to load ipex, while it looks unused, it links into torch for xpu support
         try:
             import torch_npu
@@ -352,6 +358,8 @@ def load_model(
     # Load model
     model, tokenizer = adapter.load_model(model_path, kwargs)
 
+    if isinstance(adapter, TrainInternLMAdapter):
+        return model, tokenizer
     if (
         device == "cpu"
         and kwargs["torch_dtype"] is torch.bfloat16
@@ -386,6 +394,7 @@ def get_generate_stream_function(model: torch.nn.Module, model_path: str):
     from fastchat.serve.inference import generate_stream
 
     model_type = str(type(model)).lower()
+    is_train_internlm = "train_internlm" in model_path
     is_peft = "peft" in model_type
     is_chatglm = "chatglm" in model_type
     is_falcon = "rwforcausallm" in model_type
@@ -394,6 +403,8 @@ def get_generate_stream_function(model: torch.nn.Module, model_path: str):
     is_xft = "xft" in model_type
     is_yuan = "yuan" in model_type
 
+    if is_train_internlm:
+        return generate_stream_traininternlm
     if is_chatglm:
         return generate_stream_chatglm
     elif is_falcon:
@@ -2254,8 +2265,79 @@ class YuanAdapter(BaseModelAdapter):
         return get_conv_template("yuan")
 
 
+class TrainInternLMAdapter(BaseModelAdapter):
+    """The model adapter for StableVicuna"""
+
+    def match(self, model_path: str):
+        return model_path.startswith("train_internlm:")
+
+    def load_model(self, model_path: str, from_pretrained_kwargs: dict):
+        model_path = model_path[15:] # del the prefix "train_internlm:"
+
+        train_internlm_dir = from_pretrained_kwargs.get("train_internlm_dir", None)
+
+        is_public =  ( not os.path.exists(os.path.join(train_internlm_dir, "internlm/internlm")))
+        sys.path.append(train_internlm_dir)
+        
+        if not is_public:
+            from tools.score_tools.score_utils import initialize_internlm_model
+            from tools.transformers.internlm_model.tokenization_internlm import InternLMTokenizer
+            from_pretrained_kwargs['ckpt_dir'] = model_path
+
+            train_internlm_kwargs = {
+                'train_internlm_dir': from_pretrained_kwargs.get("train_internlm_dir"), 
+                'model_type': from_pretrained_kwargs.get("model_type"), 
+                'ckpt_dir': from_pretrained_kwargs.get("ckpt_dir"), 
+                'load_type': from_pretrained_kwargs.get("load_type"), 
+                'del_model_prefix': from_pretrained_kwargs.get("del_model_prefix"), 
+                'S3_ACCESS_KEY_ID': from_pretrained_kwargs.get("S3_ACCESS_KEY_ID"), 
+                'S3_SECRET_ACCESS_KEY_ID': from_pretrained_kwargs.get("S3_SECRET_ACCESS_KEY_ID"), 
+                'param_dtype': from_pretrained_kwargs.get("param_dtype"), 
+                'training': from_pretrained_kwargs.get("training"), 
+                'seed': from_pretrained_kwargs.get("seed"), 
+                'specific_model_config': from_pretrained_kwargs.get("specific_model_config"),
+                }
+        else:
+            
+            try:
+                sys.path.append(os.path.join(train_internlm_dir, "transformers"))
+                from tools.load_internlm_model import initialize_internlm_model
+                from internlm_model.tokenization_internlm import InternLMTokenizer
+            except Exception as e:
+                logger.error(e)
+                raise "!!!!!Attention!!!!! \n InternEvo always move the api function, if load error, first check your module `InternLMTokenizer` and `initialize_internlm_model` position !!!!!!"
+            ckpt_dir= from_pretrained_kwargs.get("ckpt_dir", None)
+            real_model_path = ckpt_dir
+            if real_model_path.startswith("train_internlm:"):
+                real_model_path = real_model_path[15:]
+            if real_model_path.startswith("local:"):
+                real_model_path = real_model_path[6:]
+            model_config_path = os.path.join(real_model_path, "model_config.pt")
+            assert os.path.exists(model_config_path), f"model config file `{model_config_path}`not exist"
+            model_config = torch.load(model_config_path)
+            
+            train_internlm_kwargs = {
+                'model_type':from_pretrained_kwargs.get("model_type"),
+                'ckpt_dir': real_model_path,
+                'model_config': model_config
+            }
+
+        # if is_public:
+        tokenizer_path = from_pretrained_kwargs.pop("tokenizer_path")
+        tokenizer = InternLMTokenizer(tokenizer_path)
+        # print(from_pretrained_kwargs, flush=True)
+        model = initialize_internlm_model(**train_internlm_kwargs)
+        
+        return model, tokenizer
+
+    def get_default_conv_template(self, model_path: str) -> Conversation:
+        return get_conv_template("internlm2")
+
+
 # Note: the registration order matters.
 # The one registered earlier has a higher matching priority.
+register_model_adapter(TrainInternLMAdapter)
+
 register_model_adapter(PeftModelAdapter)
 register_model_adapter(StableVicunaAdapter)
 register_model_adapter(VicunaAdapter)

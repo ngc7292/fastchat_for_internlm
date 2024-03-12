@@ -4,12 +4,13 @@ Conversation prompt templates.
 We kindly request that you import fastchat instead of copying this file if you wish to use it.
 If you have any changes in mind, please contribute back so the community can benefit collectively and continue to maintain these valuable templates.
 """
-
+import copy
 import base64
 import dataclasses
 from enum import auto, IntEnum
 from io import BytesIO
 from typing import List, Any, Dict, Union, Tuple
+import logging
 
 
 class SeparatorStyle(IntEnum):
@@ -36,8 +37,7 @@ class SeparatorStyle(IntEnum):
     YUAN2 = auto()
 
 
-IMAGE_PLACEHOLDER_STR = "$$<image>$$"
-
+# IMAGE_PLACEHOLDER_STR = "$$<image>$$"
 
 @dataclasses.dataclass
 class Conversation:
@@ -53,7 +53,7 @@ class Conversation:
     roles: Tuple[str] = ("USER", "ASSISTANT")
     # All messages. Each item is (role, message).
     # Each message is either a string or a tuple of (string, List[image_url]).
-    messages: List[List[str]] = ()
+    messages: Union[List, List[List[str]]] = None
     # The number of few shot examples
     offset: int = 0
     # The separator style and configurations
@@ -64,15 +64,30 @@ class Conversation:
     stop_str: Union[str, List[str]] = None
     # Stops generation if meeting any token in this list
     stop_token_ids: List[int] = None
+    # IMAGE_PLACEHOLDER_STR = "$$<image>$$"
+    
+    image_placeholder_str: str = None
+    
+    def get_real_message(self, message):
+        if isinstance(message, tuple):
+            if self.image_placeholder_str is not None:
+                return message[0].replace("<image>", self.image_placeholder_str)
+            else: return message[0]
+        elif isinstance(message, str):
+            return message
+        else:
+            raise NotImplementedError
 
     def get_prompt(self) -> str:
         """Get the prompt for generation."""
+        if self.messages is None:
+            self.messages = [] 
         system_prompt = self.system_template.format(system_message=self.system_message)
         if self.sep_style == SeparatorStyle.ADD_COLON_SINGLE:
             ret = system_prompt + self.sep
             for role, message in self.messages:
                 if message:
-                    ret += role + ": " + message + self.sep
+                    ret += role + ": " + self.get_real_message(message) + self.sep
                 else:
                     ret += role + ":"
             return ret
@@ -81,10 +96,7 @@ class Conversation:
             ret = system_prompt + seps[0]
             for i, (role, message) in enumerate(self.messages):
                 if message:
-                    if type(message) is tuple:
-                        message, images = message
-                        message = IMAGE_PLACEHOLDER_STR * len(images) + message
-                    ret += role + ": " + message + seps[i % 2]
+                    ret += role + ": " + self.get_real_message(message) + seps[i % 2]
                 else:
                     ret += role + ":"
             return ret
@@ -92,7 +104,7 @@ class Conversation:
             ret = system_prompt + self.sep
             for role, message in self.messages:
                 if message:
-                    ret += role + ": " + message + self.sep
+                    ret += role + ": " + self.get_real_message(message) + self.sep
                 else:
                     ret += role + ": "  # must be end with a space
             return ret
@@ -100,7 +112,7 @@ class Conversation:
             ret = "" if system_prompt == "" else system_prompt + self.sep
             for role, message in self.messages:
                 if message:
-                    ret += role + "\n" + message + self.sep
+                    ret += role + "\n" + self.get_real_message(message) + self.sep
                 else:
                     ret += role + "\n"
             return ret
@@ -108,7 +120,7 @@ class Conversation:
             ret = system_prompt
             for role, message in self.messages:
                 if message:
-                    ret += role + message + self.sep
+                    ret += role + self.get_real_message(message) + self.sep
                 else:
                     ret += role
             return ret
@@ -117,7 +129,7 @@ class Conversation:
             ret = system_prompt
             for i, (role, message) in enumerate(self.messages):
                 if message:
-                    ret += role + message + seps[i % 2]
+                    ret += role + self.get_real_message(message) + seps[i % 2]
                 else:
                     ret += role
             return ret
@@ -128,7 +140,7 @@ class Conversation:
                     ret += (
                         role
                         + ": "
-                        + message.replace("\r\n", "\n").replace("\n\n", "\n")
+                        + self.get_real_message(message).replace("\r\n", "\n").replace("\n\n", "\n")
                     )
                     ret += "\n\n"
                 else:
@@ -144,9 +156,9 @@ class Conversation:
                 tag = self.roles[i % 2]
                 if message:
                     if i == 0:
-                        ret += message + " "
+                        ret += self.get_real_message(message) + " "
                     else:
-                        ret += tag + " " + message + seps[i % 2]
+                        ret += tag + " " + self.get_real_message(message) + seps[i % 2]
                 else:
                     ret += tag
             return ret
@@ -164,7 +176,7 @@ class Conversation:
                     ret += f"[Round {i//2 + round_add_n}]{self.sep}"
 
                 if message:
-                    ret += f"{role}：{message}{self.sep}"
+                    ret += f"{role}：{self.get_real_message(message)}{self.sep}"
                 else:
                     ret += f"{role}："
             return ret
@@ -172,7 +184,7 @@ class Conversation:
             ret = "" if system_prompt == "" else system_prompt + self.sep + "\n"
             for role, message in self.messages:
                 if message:
-                    ret += role + "\n" + message + self.sep + "\n"
+                    ret += role + "\n" + self.get_real_message(message) + self.sep + "\n"
                 else:
                     ret += role + "\n"
             return ret
@@ -182,7 +194,7 @@ class Conversation:
                 ret += system_prompt
             for role, message in self.messages:
                 if message:
-                    ret += role + "\n" + message
+                    ret += role + "\n" + self.get_real_message(message)
                 else:
                     ret += role
             return ret
@@ -194,7 +206,7 @@ class Conversation:
                 if i % 2 == 0:
                     ret += "<s>"
                 if message:
-                    ret += role + ":" + message + seps[i % 2] + "\n"
+                    ret += role + ":" + self.get_real_message(message) + seps[i % 2] + "\n"
                 else:
                     ret += role + ":"
             return ret
@@ -203,7 +215,7 @@ class Conversation:
             ret = system_prompt
             for i, (role, message) in enumerate(self.messages):
                 if message:
-                    ret += role + ":\n" + message + seps[i % 2]
+                    ret += role + ":\n" + self.get_real_message(message) + seps[i % 2]
                     if i % 2 == 1:
                         ret += "\n\n"
                 else:
@@ -213,7 +225,7 @@ class Conversation:
             ret = system_prompt
             for role, message in self.messages:
                 if message:
-                    ret += role + ": " + "<s>" + message + "</s>"
+                    ret += role + ": " + "<s>" + self.get_real_message(message) + "</s>"
                 else:
                     ret += role + ": " + "<s>"
             return ret
@@ -221,7 +233,7 @@ class Conversation:
             ret = system_prompt + self.sep
             for role, message in self.messages:
                 if message:
-                    ret += role + ":\n" + message + self.sep
+                    ret += role + ":\n" + self.get_real_message(message) + self.sep
                 else:
                     ret += role + ":\n"
             return ret
@@ -231,7 +243,7 @@ class Conversation:
                 ret += system_prompt + self.sep
             for role, message in self.messages:
                 if message:
-                    ret += role + ": " + message + self.sep
+                    ret += role + ": " + self.get_real_message(message) + self.sep
                 else:
                     ret += role + ":"
             return ret
@@ -242,7 +254,7 @@ class Conversation:
                 starting_sep = ":\n" if i % 2 == 0 else ": " + self.sep2
                 ending_sep = self.sep if i % 2 == 0 else ""
                 if message:
-                    ret += role + starting_sep + message + ending_sep
+                    ret += role + starting_sep + self.get_real_message(message) + ending_sep
                 else:
                     ret += role + starting_sep
             return ret
@@ -251,7 +263,7 @@ class Conversation:
             ret = system_prompt
             for i, (role, message) in enumerate(self.messages):
                 if message:
-                    ret += role + ": " + message + seps[i % 2]
+                    ret += role + ": " + self.get_real_message(message) + seps[i % 2]
                 else:
                     ret += role + ":"
             return ret
@@ -262,7 +274,7 @@ class Conversation:
                 ret += system_prompt + seps[1]
             for _, message in self.messages:
                 if message:
-                    ret += message + "<n>"
+                    ret += self.get_real_message(message) + "<n>"
                 else:
                     ret += ""
             ret = ret.rstrip("<n>") + seps[0]
@@ -280,20 +292,23 @@ class Conversation:
 
         return images
 
-    def set_system_message(self, system_message: str):
+    def set_system_message(self, system_message: Union[str, List[str]]):
         """Set the system message."""
         self.system_message = system_message
 
-    def append_message(self, role: str, message: str):
+    def append_message(self, role: str, message: Union[str, List[str]]):
         """Append a new message."""
+        if self.messages is None:
+            self.messages = []
         self.messages.append([role, message])
 
-    def update_last_message(self, message: str):
+    def update_last_message(self, message: Union[str, List[str]]):
         """Update the last output.
 
         The last message is typically set to be None when constructing the prompt,
         so we need to update it in-place after getting the response from a model.
         """
+        assert self.messages is not None and len(self.messages) > 1
         self.messages[-1][1] = message
 
     def convert_image_to_base64(self, image):
@@ -369,19 +384,20 @@ class Conversation:
         ]
 
     def copy(self):
-        return Conversation(
-            name=self.name,
-            system_template=self.system_template,
-            system_message=self.system_message,
-            roles=self.roles,
-            messages=[[x, y] for x, y in self.messages],
-            offset=self.offset,
-            sep_style=self.sep_style,
-            sep=self.sep,
-            sep2=self.sep2,
-            stop_str=self.stop_str,
-            stop_token_ids=self.stop_token_ids,
-        )
+        return copy.deepcopy(self)
+        # return Conversation(
+        #     name=self.name,
+        #     system_template=self.system_template,
+        #     system_message=self.system_message,
+        #     roles=self.roles,
+        #     messages=[[x, y] for x, y in self.messages],
+        #     offset=self.offset,
+        #     sep_style=self.sep_style,
+        #     sep=self.sep,
+        #     sep2=self.sep2,
+        #     stop_str=self.stop_str,
+        #     stop_token_ids=self.stop_token_ids,
+        # )
 
     def dict(self):
         return {
@@ -409,7 +425,8 @@ def register_conv_template(template: Conversation, override: bool = False):
 
 def get_conv_template(name: str) -> Conversation:
     """Get a conversation template."""
-    return conv_templates[name].copy()
+    conv = conv_templates[name].copy()
+    return conv
 
 
 # An empty template for raw conversation.
@@ -1146,6 +1163,20 @@ register_conv_template(
     )
 )
 
+# OpenOrcaYF template
+register_conv_template(
+    Conversation(
+        name="open-orca-yf",
+        system_template="{system_message}",
+        system_message="You are an AI assistant. User will you give you a task. Your goal is to complete the task as faithfully as you can. While performing the task think step-by-step and justify your steps.",
+        roles=("User", "Assistant"),
+        sep_style=SeparatorStyle.ADD_COLON_SPACE_SINGLE,
+        sep="\n",
+        # stop_token_ids=[32000, 32001],  # "<|end_of_turn|>"
+        stop_str="User: ",
+    )
+)
+
 # Open-Orca/Mistral-7B-OpenOrca template
 # source: https://huggingface.co/Open-Orca/Mistral-7B-OpenOrca
 # reference: https://huggingface.co/Open-Orca/Mistral-7B-OpenOrca#prompt-template
@@ -1537,6 +1568,50 @@ register_conv_template(
     )
 )
 
+register_conv_template(
+    Conversation(
+        name="internlm2",
+        system_template="",
+        system_message="",
+        roles=("", ""),
+        sep_style=SeparatorStyle.NO_COLON_SINGLE,
+        sep="",
+        stop_str="",
+    )
+)
+
+register_conv_template(
+    Conversation(
+        name="internlm2-xcomposer",
+        system_template="[UNUSED_TOKEN_146]system:\n{system_message}",
+        system_message="You are an AI assistant whose name is InternLM-XComposer (浦语·灵笔). \
+- InternLM-XComposer (浦语·灵笔) is a multi-modality conversational language model that is developed by Shanghai AI Laboratory (上海人工智能实验室). It is designed to be helpful, honest, and harmless.\
+- InternLM-XComposer (浦语·灵笔) can understand and communicate fluently in the language chosen by the user such as English and 中文.\
+- InternLM-XComposer (浦语·灵笔) is capable of comprehending and articulating responses effectively based on the provided image.",
+        roles=("[UNUSED_TOKEN_146]user", "[UNUSED_TOKEN_146]assistant"),
+        sep_style=SeparatorStyle.ADD_COLON_TWO,
+        sep="[UNUSED_TOKEN_145]",
+        sep2="[UNUSED_TOKEN_145]",
+        stop_str="[UNUSED_TOKEN_145]",
+        image_placeholder_str="<Img><ImageHere></Img>",
+    )
+)
+
+register_conv_template(
+    Conversation(
+        name="internlm2-xcomposer-vl",
+        system_template="",
+        system_message="",
+        roles=("", ""),
+        sep_style=SeparatorStyle.NO_COLON_SINGLE,
+        sep="",
+        sep2="",
+        stop_str="",
+        image_placeholder_str="<Img><ImageHere></Img>",
+    )
+)
+
+
 # nvidia/Llama2-70B-SteerLM-Chat
 register_conv_template(
     Conversation(
@@ -1599,6 +1674,37 @@ if __name__ == "__main__":
     print("-- Claude template --")
     conv = get_conv_template("claude")
     conv.append_message(conv.roles[0], "Hello!")
+    conv.append_message(conv.roles[1], "Hi!")
+    conv.append_message(conv.roles[0], "How are you?")
+    conv.append_message(conv.roles[1], None)
+    print(conv.get_prompt())
+    
+    print("\n")
+    
+    print("-- Internlm2 template --")
+    conv = get_conv_template("internlm2")
+    conv.append_message(conv.roles[0], "Hello!")
+    conv.append_message(conv.roles[1], "Hi!")
+    conv.append_message(conv.roles[0], "How are you?")
+    conv.append_message(conv.roles[1], None)
+    print(conv.get_prompt())
+    
+    print("-- Internlm2 template --")
+    conv = get_conv_template("internlm2-xcomposer")
+    print(conv)
+    # import pdb;pdb.set_trace()
+    conv.append_message(conv.roles[0], ("qwrwq<>", "asfdasfda"))
+    conv.append_message(conv.roles[1], "Hi!")
+    conv.append_message(conv.roles[0], "How are you?")
+    conv.append_message(conv.roles[1], None)
+    print(conv.get_prompt())
+
+    print("-- Internlm2 template --")
+    conv = get_conv_template("internlm2-xcomposer-vl")
+    conv = conv.copy()
+    print(conv)
+    # import pdb;pdb.set_trace()
+    conv.append_message(conv.roles[0], ("qwrwq<image>", "asfdasfda.jpg"))
     conv.append_message(conv.roles[1], "Hi!")
     conv.append_message(conv.roles[0], "How are you?")
     conv.append_message(conv.roles[1], None)

@@ -155,8 +155,11 @@ class BaseModelWorker:
         try:
             input_ids = self.tokenizer(prompt).input_ids
             input_echo_len = len(input_ids)
-        except TypeError:
+        except TypeError as e:
+            logger.error(e)
             input_echo_len = self.tokenizer.num_tokens(prompt)
+        except Exception as e:
+            logger.error(e)
 
         ret = {
             "count": input_echo_len,

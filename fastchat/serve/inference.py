@@ -11,16 +11,16 @@ import warnings
 
 import psutil
 import torch
-from transformers import (
-    AutoTokenizer,
-    AutoModelForCausalLM,
-    LlamaTokenizer,
-    LlamaForCausalLM,
-    AutoModel,
-    AutoModelForSeq2SeqLM,
-    T5Tokenizer,
-    AutoConfig,
-)
+# from transformers import (
+#     AutoTokenizer,
+#     AutoModelForCausalLM,
+#     LlamaTokenizer,
+#     LlamaForCausalLM,
+#     AutoModel,
+#     AutoModelForSeq2SeqLM,
+#     T5Tokenizer,
+#     AutoConfig,
+# )
 from transformers.generation.logits_process import (
     LogitsProcessorList,
     RepetitionPenaltyLogitsProcessor,
