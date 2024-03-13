@@ -197,6 +197,9 @@ def create_multi_model_worker():
         default=False,
         help="Enable SSL. Requires OS Environment variables 'SSL_KEYFILE' and 'SSL_CERTFILE'.",
     )
+    parser.add_argument("--trust_remote_code", type=bool, default=True)
+    parser.add_argument("--cache_dir", type=str, default="/fs-computility/llm/shared/feizhaoye/cache/huggingface")
+    
     args = parser.parse_args()
     logger.info(f"args: {args}")
 
@@ -263,6 +266,8 @@ def create_multi_model_worker():
             xft_config=xft_config,
             stream_interval=args.stream_interval,
             conv_template=conv_template,
+            trust_remote_code=args.trust_remote_code,
+            cache_dir=args.cache_dir
         )
         workers.append(w)
         for model_name in model_names:

@@ -289,7 +289,6 @@ class Conversation:
                 if type(msg) is tuple:
                     for image in msg[1]:
                         images.append(image)
-
         return images
 
     def set_system_message(self, system_message: Union[str, List[str]]):
@@ -1593,7 +1592,7 @@ register_conv_template(
         sep="[UNUSED_TOKEN_145]",
         sep2="[UNUSED_TOKEN_145]",
         stop_str="[UNUSED_TOKEN_145]",
-        image_placeholder_str="<Img><ImageHere></Img>",
+        image_placeholder_str="<ImageHere>",
     )
 )
 
@@ -1607,7 +1606,7 @@ register_conv_template(
         sep="",
         sep2="",
         stop_str="",
-        image_placeholder_str="<Img><ImageHere></Img>",
+        image_placeholder_str="<ImageHere>",
     )
 )
 
@@ -1702,10 +1701,12 @@ if __name__ == "__main__":
     print("-- Internlm2 template --")
     conv = get_conv_template("internlm2-xcomposer-vl")
     conv = conv.copy()
-    print(conv)
+    # print(conv)
     # import pdb;pdb.set_trace()
-    conv.append_message(conv.roles[0], ("qwrwq<image>", "asfdasfda.jpg"))
+    conv.append_message(conv.roles[0], ("qwrwq<image>", ["asfdasfda.jpg"]))
     conv.append_message(conv.roles[1], "Hi!")
     conv.append_message(conv.roles[0], "How are you?")
     conv.append_message(conv.roles[1], None)
+    
     print(conv.get_prompt())
+    print(conv.get_images())

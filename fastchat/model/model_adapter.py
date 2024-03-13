@@ -38,6 +38,7 @@ from fastchat.model.model_falcon import generate_stream_falcon
 from fastchat.model.model_yuan2 import generate_stream_yuan2
 from fastchat.model.model_exllama import generate_stream_exllama
 from fastchat.model.model_xfastertransformer import generate_stream_xft
+from fastchat.model.model_internlmxcomposer import generate_stream_internlmxcomposer
 
 from fastchat.model.model_train_internlm import generate_stream_traininternlm
 from fastchat.model.monkey_patch_non_inplace import (
@@ -402,8 +403,11 @@ def get_generate_stream_function(model: torch.nn.Module, model_path: str):
     is_exllama = "exllama" in model_type
     is_xft = "xft" in model_type
     is_yuan = "yuan" in model_type
+    is_internlmxcomposer = "internlm-xcomposer" in model_path
 
-    if is_train_internlm:
+    if is_internlmxcomposer:
+        return generate_stream_internlmxcomposer
+    elif is_train_internlm:
         return generate_stream_traininternlm
     if is_chatglm:
         return generate_stream_chatglm
@@ -2334,9 +2338,41 @@ class TrainInternLMAdapter(BaseModelAdapter):
         return get_conv_template("internlm2")
 
 
+class InternlmxcomposerAdapter(BaseModelAdapter):
+    def match(self, model_path: str):
+        return "internlm-xcomposer2" in model_path.lower()
+    
+    def load_model(self, model_path: str, from_pretrained_kwargs: Dict):
+        from_pretrained_kwargs.pop("torch_dtype")
+        tokenizer = AutoTokenizer.from_pretrained(model_path, **from_pretrained_kwargs)
+        model = AutoModelForCausalLM.from_pretrained(model_path,torch_dtype=torch.float32, **from_pretrained_kwargs)
+
+        return model, tokenizer
+    
+    def get_default_conv_template(self, model_path: str) -> Conversation:
+        return get_conv_template("internlm2-xcomposer") 
+    
+class InternlmxcomposerVLAdapter(BaseModelAdapter):
+    def match(self, model_path: str):
+        return "internlm-xcomposer2-vl" in model_path.lower()
+    
+    def load_model(self, model_path: str, from_pretrained_kwargs: Dict):
+        from_pretrained_kwargs.pop("torch_dtype")
+        logger.warning("InternlmxcomposerVLAdapter default using fp16")
+        tokenizer = AutoTokenizer.from_pretrained(model_path, torch_dtype=torch.float16, **from_pretrained_kwargs)
+        model = AutoModelForCausalLM.from_pretrained(model_path, **from_pretrained_kwargs)
+
+        return model, tokenizer
+    
+    def get_default_conv_template(self, model_path: str) -> Conversation:
+        return get_conv_template("internlm2-xcomposer-vl")
+    
+    
 # Note: the registration order matters.
 # The one registered earlier has a higher matching priority.
 register_model_adapter(TrainInternLMAdapter)
+register_model_adapter(InternlmxcomposerVLAdapter)
+register_model_adapter(InternlmxcomposerAdapter)
 
 register_model_adapter(PeftModelAdapter)
 register_model_adapter(StableVicunaAdapter)

@@ -88,6 +88,7 @@ class ModelWorker(BaseModelWorker):
             exllama_config=exllama_config,
             xft_config=xft_config,
             debug=debug,
+            **kwargs
         )
         self.device = device
         if self.tokenizer.pad_token == None:
